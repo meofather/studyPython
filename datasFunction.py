@@ -1,6 +1,7 @@
 import json
 import random
 import time
+import os
 from typing import Dict, Optional, Any
 
 from telegram.client import Telegram
@@ -46,17 +47,53 @@ def addUserToContact(tg: Telegram, members: Optional[Dict[Any, Any]]):
 '''
 
 
-def getMembers(tg: Telegram, group_id, current_page=1) -> object:
+def getMembers(tg: Telegram, group_id, current_page=1, page_size=20) -> object:
     param = {
         'supergroup_id': group_id,
-        'limit': 20,
-        'offset': 20 * current_page
+        'limit': page_size,
+        'offset': page_size * current_page
+    }
+    if exists(group_id, current_page, page_size * current_page):
+        print(f' getting from cache')
+        members = readMembersFromFile(group_id, current_page, page_size * current_page)
+    else:
+        print(f'get from remote')
+        r = tg.call_method('getSupergroupMembers', param)
+        r.wait()
+        members = r.update['members']
+        saveMembersAsFile(group_id, current_page, page_size * current_page, members)
+
+    print(f' Members: {members}')
+    return members, current_page
+    pass
+
+
+def getMembersCount(tg: Telegram, group_id, page_size):
+    param = {
+        'supergroup_id': group_id,
+        'limit': 20
     }
     r = tg.call_method('getSupergroupMembers', param)
     r.wait()
-    print(f' Members: {r.update}')
-    return r.update['members'], current_page, int((r.update['total_count'] - 1) / 20 + 1)
-    pass
+    page = int((r.update['total_count'] - 1) / page_size + 1);
+    print(f">> total :{r.update['total_count']} totalPage: {page}")
+    return page
+
+
+def exists(group_id, limit, offset):
+    return os.path.exists(f"member_{group_id}_{limit}_{offset}.json")
+
+
+def saveMembersAsFile(group_id, limit, offset, data):
+    with open(f"member_{group_id}_{limit}_{offset}.json", 'w+') as f:
+        json.dump(data, f)
+        print("complete writing...")
+
+
+def readMembersFromFile(group_id, limit, offset):
+    with open(f"member_{group_id}_{limit}_{offset}.json", "r") as f:
+        members = json.load(f)
+        return members
 
 
 def removeMutis(old_list):
