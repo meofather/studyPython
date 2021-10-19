@@ -5,7 +5,7 @@ import time
 from telegram.client import Telegram
 
 import utils
-from datasFunction import addUserToContact, getMembers, removeMutis
+from datasFunction import addUserToContact, getMembers, removeMutis, getMembersCount
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ def getSubList(list, start, end):
     for i in range(start, end):
         temp.append(list[i])
     return temp
+
 
 if __name__ == '__main__':
     utils.setup_logging()
@@ -77,23 +78,29 @@ if __name__ == '__main__':
     # 获取用户信息
     resource_members = []
     target_members = []
+    page_size = 50
+    group_id = resource_chat_info['type']['supergroup_id']
 
-    resource_members, current_page, page = getMembers(tg, resource_chat_info['type']['supergroup_id'])
+    page = getMembersCount(tg, group_id, page_size)
+
+    resource_members, current_page = getMembers(tg, group_id, page_size=page_size)
     current_page += 1
     while current_page <= page:
         print(f'resource 总页数为：{page} 当前页为：{current_page}')
-        temp1, current_page, page = getMembers(tg, resource_chat_info['type']['supergroup_id'], current_page)
+        temp1, current_page = getMembers(tg, group_id, current_page, page_size)
         if len(temp1) == 0:
             break
         resource_members.extend(temp1)
         current_page += 1
         time.sleep(5)
 
-    target_members, current_page, page = getMembers(tg, target_chat_info['type']['supergroup_id'])
+    group_id = target_chat_info['type']['supergroup_id']
+    page = getMembersCount(group_id, page_size)
+    target_members, current_page = getMembers(tg, group_id, page_size=page_size)
     current_page += 1
     while current_page <= page:
         print(f'target 总页数为：{page} 当前页为：{current_page}')
-        temp2, current_page, page = getMembers(tg, target_chat_info['type']['supergroup_id'], current_page)
+        temp2, current_page = getMembers(tg, group_id, current_page, page_size)
         if len(temp2) == 0:
             break
         target_members.extend(temp2)
@@ -116,16 +123,15 @@ if __name__ == '__main__':
                                                             (page_size + 1) * current_page))
         print(f"正在添加：{user_ids_five}")
         r = tg.call_method('addChatMembers', {'chat_id': target_chat_info['id'], 'user_ids': user_ids_five})
+        r.wait()
         if r.error:
             print(f'{r.error_info}')
         else:
             print(f' 调用正常>>>{user_ids_five}')
         # 添加后删除联系人
         r = tg.call_method('removeContacts', {'user_ids': user_ids_five})
+        r.wait()
         print(f'>>>> {r.update}')
         time.sleep(5)
     print('Done')
     tg.stop()
-
-
-
