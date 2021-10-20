@@ -1,7 +1,9 @@
 import argparse
+import json
 import logging
 import time
 
+import redis
 from telegram.client import Telegram
 
 import utils
@@ -18,6 +20,8 @@ def confirm(message):
 
 def getSubList(parent_list, start=0, end=0):
     temp = []
+    if end >= len(parent_list):
+        end = len(parent_list)-1
     for i in range(start, end):
         temp.append(parent_list[i])
     return temp
@@ -61,7 +65,7 @@ if __name__ == '__main__':
         r = tg.get_chat(chat_id)
         r.wait()
         title = r.update['title']
-        if r.update['type']['@type'] == 'chatTypeSupergroup':
+        if r.update['type']['@type'] == 'chatTypeSupergroup' and not r.update['type']['is_channel']:
             print(f'{index} {chat_id} >> {title}')
             chat_map[index] = r.update
             index += 1
@@ -92,7 +96,7 @@ if __name__ == '__main__':
             break
         resource_members.extend(temp1)
         current_page += 1
-        time.sleep(5)
+        time.sleep(2)
 
     group_id = target_chat_info['type']['supergroup_id']
 
@@ -100,42 +104,48 @@ if __name__ == '__main__':
 
     target_members, current_page = getMembers(tg, group_id, page_size=page_size)
     current_page += 1
+    pool = redis.ConnectionPool(host='localhost', port=6379, decode_responses=True)
+    redis_exc = redis.Redis(connection_pool=pool)
     while current_page <= page:
         print(f'target 总页数为：{page} 当前页为：{current_page}')
         temp2, current_page = getMembers(tg, group_id, current_page, page_size)
         if len(temp2) == 0:
             break
-        target_members.extend(temp2)
+
+        for tem in temp2:
+            member_key_in_redis = f'member_{tem["user_id"]}'
+            redis_exc.set(member_key_in_redis,json.dumps(tem))
+
         current_page += 1
-        time.sleep(5)
-    # 去重
-    resource_members.extend(target_members)
-    removeMutis(resource_members)
+        time.sleep(2)
 
     count = 0
     user_ids_five = []
     resource_members_temp = []
     total = len(resource_members)
     current_page = 1;
-    page_size = 5
+    page_size = 20
     page = int((total - 1) / page_size + 1)
     while current_page <= page:
         sleep_time = 3
         # 添加到目标群成员到通讯录
+        print(f"正在添加：一共:{total},当前页:{current_page}")
         temp3 = getSubList(resource_members, page_size * (current_page - 1), page_size * current_page);
         userMap, user_ids_five = addUserToContact(tg, temp3)
         if len(user_ids_five) == 0:
-            break
-        print(f"正在添加：一共:{total},当前页:{current_page},{user_ids_five}")
-        r = tg.call_method('addChatMembers', {'chat_id': target_chat_info['id'], 'user_ids': user_ids_five})
-        r.wait()
-        time.sleep(sleep_time)
-        if r.error:
-            print(f'{r.error_info}')
-            if r.error_info['code'] == 429:
-                sleep_time = 30
-        else:
-            print(f' 调用正常>>>{user_ids_five}')
+            current_page += 1
+            continue
+
+        for user_id in user_ids_five:
+            r = tg.call_method('addChatMembers', {'chat_id': target_chat_info['id'], 'user_ids': [user_id]})
+            r.wait()
+            time.sleep(sleep_time)
+            if r.error:
+                print(f'{r.error_info}')
+                if r.error_info['code'] == 429:
+                    sleep_time = 30
+            member_key_in_redis = f'member_{user_id}'
+            redis_exc.set(member_key_in_redis,json.dumps(userMap[user_id]))
         # 添加后删除联系人
         r = tg.call_method('removeContacts', {'user_ids': user_ids_five})
         r.wait()
