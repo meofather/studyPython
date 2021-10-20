@@ -1,107 +1,146 @@
-import json
-import random
+import argparse
+import logging
 import time
-import os
-from typing import Dict, Optional, Any
 
 from telegram.client import Telegram
 
-dir = '/home/milo/pythonCache/'
+import utils
+from datasFunction import addUserToContact, getMembers, removeMutis, getMembersCount
 
-'''
-    添加用户到通讯薄
-'''
+logger = logging.getLogger(__name__)
 
 
-def addUserToContact(tg: Telegram, members: Optional[Dict[Any, Any]]):
-    userMap = {}
-    user_ids = []
-    for member in members:
-        # print(f'user_id:{member["user_id"]}')
-        r = tg.call_method('getUser', {'user_id': member["user_id"]})
+def confirm(message):
+    sure = input(message + ' ')
+    if sure.lower() not in ['y', 'yes']:
+        exit(0)
+
+
+def getSubList(parent_list, start=0, end=0):
+    temp = []
+    for i in range(start, end):
+        temp.append(parent_list[i])
+    return temp
+
+
+if __name__ == '__main__':
+    utils.setup_logging()
+
+    parser = argparse.ArgumentParser()
+    utils.add_api_args(parser)
+    utils.add_proxy_args(parser)
+    args = parser.parse_args()
+
+    tg = Telegram(
+        api_id=args.api_id,
+        api_hash=args.api_hash,
+        phone=args.phone,
+        database_encryption_key='changeme1234',
+        proxy_server=args.proxy_server,
+        proxy_port=args.proxy_port,
+        proxy_type=utils.parse_proxy_type(args)
+    )
+    # you must call login method before others
+    tg.login()
+
+    # get me
+    result = tg.get_me()
+    result.wait()
+    me = result.update['id']
+    print(result.update)
+
+    # get chats
+    result = tg.get_chats(9223372036854775807)  # const 2^62-1: from the first
+    result.wait()
+    chats = result.update['chat_ids']
+    # get each chat
+    print('Chat List')
+    chat_map = {}
+    index = 0
+    for chat_id in chats:
+        r = tg.get_chat(chat_id)
         r.wait()
-        print(f'MemberInfo:{r.update}')
-        if r.update["username"] != '':
-            print(f'MemberInfo: {r.update["id"]}  ,  {r.update["username"]}')
-            userMap[member["user_id"]] = r.update
-            contactParam = {
-                'user_id': member["user_id"],
-                'first_name': ''.join(random.sample('zyxwvutsrqponmlkjihgfedcba', 5)),
-                'last_name': ''.join(random.sample('zyxwvutsrqponmlkjihgfedcba', 5))
-            }
-            r = tg.call_method('addContact', {'contact': contactParam})
-            if r.error:
-                print(f'{r.error_info}')
-            else:
-                print(f' 调用正常>>>{json.dumps(contactParam)}')
-            time.sleep(3);
-            user_ids.append(member["user_id"])
-            pass
-        pass
+        title = r.update['title']
+        if r.update['type']['@type'] == 'chatTypeSupergroup':
+            print(f'{index} {chat_id} >> {title}')
+            chat_map[index] = r.update
+            index += 1
 
-    return userMap, user_ids
+    resource_index = int(input('选择要转移的群: ').strip())
+    target_index = int(input('选择目标群: ').strip())
+    resource_chat_info = chat_map[resource_index]
+    target_chat_info = chat_map[target_index]
 
+    print(f'Chat: {resource_chat_info["title"]} >>即将转移到>> {target_chat_info["title"]}')
 
-'''
-    获取用户信息
-'''
+    confirm('确认开始？? Y/N')
 
+    # 获取用户信息
+    resource_members = []
+    target_members = []
+    page_size = 100
+    group_id = resource_chat_info['type']['supergroup_id']
 
-def getMembers(tg: Telegram, group_id, current_page=1, page_size=20) -> object:
-    param = {
-        'supergroup_id': group_id,
-        'limit': page_size,
-        'offset': page_size * current_page
-    }
-    if exists(group_id, current_page, page_size * current_page):
-        print(f' getting from cache')
-        members = readMembersFromFile(group_id, current_page, page_size * current_page)
-    else:
-        print(f'get from remote')
-        r = tg.call_method('getSupergroupMembers', param)
+    page = getMembersCount(tg, group_id, page_size)
+
+    resource_members, current_page = getMembers(tg, group_id, page_size=page_size)
+    current_page += 1
+    while current_page <= page:
+        print(f'resource 总页数为：{page} 当前页为：{current_page}')
+        temp1, current_page = getMembers(tg, group_id, current_page, page_size)
+        if len(temp1) == 0:
+            break
+        resource_members.extend(temp1)
+        current_page += 1
+        time.sleep(5)
+
+    group_id = target_chat_info['type']['supergroup_id']
+
+    page = getMembersCount(tg, group_id, page_size)
+
+    target_members, current_page = getMembers(tg, group_id, page_size=page_size)
+    current_page += 1
+    while current_page <= page:
+        print(f'target 总页数为：{page} 当前页为：{current_page}')
+        temp2, current_page = getMembers(tg, group_id, current_page, page_size)
+        if len(temp2) == 0:
+            break
+        target_members.extend(temp2)
+        current_page += 1
+        time.sleep(5)
+    # 去重
+    resource_members.extend(target_members)
+    removeMutis(resource_members)
+
+    count = 0
+    user_ids_five = []
+    resource_members_temp = []
+    total = len(resource_members)
+    current_page = 1;
+    page_size = 5
+    page = int((total - 1) / page_size + 1)
+    while current_page <= page:
+        sleep_time = 3
+        # 添加到目标群成员到通讯录
+        temp3 = getSubList(resource_members, page_size * (current_page - 1), page_size * current_page);
+        userMap, user_ids_five = addUserToContact(tg, temp3)
+        if len(user_ids_five) == 0:
+            break
+        print(f"正在添加：一共:{total},当前页:{current_page},{user_ids_five}")
+        r = tg.call_method('addChatMembers', {'chat_id': target_chat_info['id'], 'user_ids': user_ids_five})
         r.wait()
-        members = r.update['members']
-        saveMembersAsFile(group_id, current_page, page_size * current_page, members)
-
-    print(f' Members: {members}')
-    return members, current_page
-    pass
-
-
-def getMembersCount(tg: Telegram, group_id, page_size):
-    param = {
-        'supergroup_id': group_id,
-        'limit': 20
-    }
-    r = tg.call_method('getSupergroupMembers', param)
-    r.wait()
-    page = int((r.update['total_count'] - 1) / page_size + 1);
-    print(f">> total :{r.update['total_count']} totalPage: {page}")
-    return page
-
-
-def exists(group_id, limit, offset):
-    global dir
-    return os.path.exists(f"{dir}member_{group_id}_{limit}_{offset}.json")
-
-
-def saveMembersAsFile(group_id, limit, offset, data):
-    global dir
-    with open(f"{dir}member_{group_id}_{limit}_{offset}.json", 'w+') as f:
-        json.dump(data, f)
-        print("complete writing...")
-
-
-def readMembersFromFile(group_id, limit, offset):
-    global dir
-    with open(f"{dir}member_{group_id}_{limit}_{offset}.json", "r") as f:
-        members = json.load(f)
-        return members
-
-
-def removeMutis(old_list):
-    for i in old_list:
-        for j in old_list:
-            if i['user_id'] == j['user_id'] and i != j:
-                print(f"重复的ID》》{j['user_id']}")
-                old_list.remove(j)
+        time.sleep(sleep_time)
+        if r.error:
+            print(f'{r.error_info}')
+            if r.error_info['code'] == 429:
+                sleep_time = 30
+        else:
+            print(f' 调用正常>>>{user_ids_five}')
+        # 添加后删除联系人
+        r = tg.call_method('removeContacts', {'user_ids': user_ids_five})
+        r.wait()
+        print(f'>>>> {r.update}')
+        current_page += 1
+        time.sleep(3)
+    print('Done')
+    tg.stop()
