@@ -152,5 +152,6 @@ if __name__ == '__main__':
         print(f'>>>> {r.update}')
         current_page += 1
         time.sleep(3)
+
     print('Done')
     tg.stop()
