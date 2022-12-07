@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def confirm(message):
-    sure = input(message + ' ')
+    sure = input(message + ' yes ')
     if sure.lower() not in ['y', 'yes']:
         exit(0)
 
